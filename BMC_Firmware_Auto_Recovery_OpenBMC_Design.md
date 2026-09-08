@@ -1,7 +1,7 @@
 # BMC Firmware Auto-Recovery
 
 **Target:** OpenBMC - EVB-AST2600   
-**Last updated:** 2026-09-04
+**Last updated:** 2026-09-08
 
 ## Summary
 
@@ -93,17 +93,17 @@ The configurable `recovery_bootfile` is used by both eMMC and TFTP recovery.
 
 All values are persistent U-Boot environment variables.
 
-| Variable | Default / expected value | Description | Variable Change Option |
-| --- | --- | --- | --- |
-| `recovery_retry` | Platform-defined positive integer | Maximum attempts per recovery source. | Build-time (`CONFIG_EXTRA_ENV_SETTINGS`) |
-| `recovery_last_source` | Empty, `mmc`, or `tftp` | Last recovery source in the current recovery sequence. | U-Boot runtime (`env set`) |
-| `recovery_max_bootretry` | Platform-defined non-negative integer | Failed normal boot attempts allowed before automatic recovery starts. | Build-time (`CONFIG_EXTRA_ENV_SETTINGS`) |
-| `recovery_current_bootretry` | `0` | Persistent normal-boot attempt counter. | U-Boot runtime (`env set`) |
-| `recovery_mmc_dev` | `0` | eMMC device index containing the recovery image. | Build-time (`CONFIG_EXTRA_ENV_SETTINGS`) |
-| `recovery_mmc_part` | `5` | eMMC partition containing the recovery image. | Build-time (`CONFIG_EXTRA_ENV_SETTINGS`) |
-| `recovery_bootfile` | `obmc-phosphor-image-evb-ast2600.static.mtd` | Recovery image filename used by both eMMC and TFTP sources. | OEM IPMI (selector `0x02`) |
-| `recovery_tftp_ip` | Platform-provisioned IPv4 address | TFTP server address used for network recovery. | OEM IPMI (selector `0x01`) |
-| `recovery_mode_selection` | `auto` | Recovery source override: `auto` uses the default source-selection logic; `mmc` forces eMMC only; `tftp` forces TFTP only. | OEM IPMI (selector `0x03`) |
+| Variable | Default value | Allowed values | Description | Variable Change Option |
+| --- | --- | --- | --- | --- |
+| `recovery_retry` | Platform-defined positive integer | Positive integer | Maximum attempts per recovery source. | Build-time (`CONFIG_EXTRA_ENV_SETTINGS`) |
+| `recovery_last_source` | Empty | Empty, `mmc`, or `tftp` | Last recovery source in the current recovery sequence. | U-Boot runtime (`env set`) |
+| `recovery_max_bootretry` | Platform-defined non-negative integer | Non-negative integer | Failed normal boot attempts allowed before automatic recovery starts. | Build-time (`CONFIG_EXTRA_ENV_SETTINGS`) |
+| `recovery_current_bootretry` | `0` | Non-negative integer | Persistent normal-boot attempt counter. | U-Boot runtime (`env set`) |
+| `recovery_mmc_dev` | `0` | `0`, `1`, or `2` (hardware/vendor-defined) | eMMC device index containing the recovery image. | Build-time (`CONFIG_EXTRA_ENV_SETTINGS`) |
+| `recovery_mmc_part` | `5` | Platform/vendor-defined partition number | eMMC partition containing the recovery image. | Build-time (`CONFIG_EXTRA_ENV_SETTINGS`) |
+| `recovery_bootfile` | `obmc-phosphor-image-evb-ast2600.static.mtd` | 1–42 ASCII bytes, no embedded NUL | Recovery image filename used by both eMMC and TFTP sources. | OEM IPMI (selector `0x02`) |
+| `recovery_tftp_ip` | Platform-provisioned IPv4 address | Valid IPv4 address | TFTP server address used for network recovery. | OEM IPMI (selector `0x01`) |
+| `recovery_mode_selection` | `auto` | `auto`, `mmc`, or `tftp` | Recovery source override: `auto` uses the default source-selection logic; `mmc` forces eMMC only; `tftp` forces TFTP only. | OEM IPMI (selector `0x03`) |
 
 ## Boot and Recovery Behavior
 
@@ -125,18 +125,18 @@ was the last successful source for the active recovery sequence:
 
 ```mermaid
 flowchart TD
-    A([Recovery Triggered]) --> B{recovery_last_source?}
+    A(["Recovery Triggered"]) --> B{"recovery_last_source?"}
 
-    B -- empty or tftp --> C[Try eMMC\ndevice 0 · partition 5]
-    B -- mmc --> E[Try TFTP\nrecovery_tftp_ip]
+    B -- "empty or tftp" --> C["Try eMMC<br/>device 0 · partition 5<br/>(configurable)"]
+    B -- "mmc" --> E["Try TFTP<br/>recovery_tftp_ip<br/>(configurable)"]
 
-    C --> D{eMMC success?}
-    D -- Yes --> G([Clear state · Boot])
-    D -- No  --> E
+    C --> D{"eMMC success?"}
+    D -- "Yes" --> G(["Clear state · Boot"])
+    D -- "No" --> E
 
-    E --> F{TFTP success?}
-    F -- Yes --> G
-    F -- No  --> H([Halt · U-Boot console\nmanual recovery required])
+    E --> F{"TFTP success?"}
+    F -- "Yes" --> G
+    F -- "No" --> H(["Halt · U-Boot console<br/>manual recovery required"])
 ```
 
 ### eMMC recovery
