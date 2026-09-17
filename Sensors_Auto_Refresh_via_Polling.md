@@ -1,15 +1,16 @@
 # Sensors Page Auto-Refresh via Polling
 
 **Target:** OpenBMC — OpenBMC Web UI & bmcweb  
-**Last updated:** 2026-08-25
+**Last updated:** 2026-09-17
 
 ## Summary
 
 This design adds automatic periodic data refresh (polling) to the Web UI
-**Sensors page** (Hardware Status → Sensors). A new OEM Redfish endpoint
-aggregates all sensor readings, thresholds, and health into a single response.
-The frontend polls this endpoint every 10 seconds when the existing Sync
-toggle is active, applying incremental updates to avoid full-page re-renders.
+**Sensors page** (Hardware Status → Sensors). Standard Redfish `$expand` queries
+are utilized on the Chassis Sensors collections to retrieve all sensor readings,
+thresholds, and health states in bulk. The frontend polls these standard
+endpoints every 10 seconds when the existing Sync toggle is active, applying
+incremental updates to avoid full-page re-renders.
 
 ## Background
 
@@ -19,15 +20,15 @@ The existing Dashboard polling feature introduced:
 - A backend mechanism to **skip session-timer reset** for polling URLs
 - Persistence of the polling toggle state in `localStorage`
 
-The Sensors page currently loads data once at page open using the standard
-Redfish path, which issues one request per chassis plus one request per
-individual sensor to retrieve threshold details. For systems with 100+ sensors,
-this produces hundreds of HTTP requests and provides no auto-refresh.
+The Sensors page loads data using standard Redfish endpoints. By leveraging
+Redfish-standard expand queries (`?$expand=.($levels=1)`), all sensor data for
+each chassis is fetched in a single request per chassis, eliminating multiple
+per-sensor HTTP requests and enabling periodic auto-refresh.
 
 ## Requirements
 
-- Provide a single API endpoint that returns all sensor data (readings,
-  units, thresholds, health, availability) in one response.
+- Use standard Redfish Chassis Sensors endpoints with level-1 `$expand`
+  query (`/redfish/v1/Chassis/{chassisId}/Sensors?$expand=.($levels=1)`).
 - Automatically refresh sensor data every 10 seconds when the Sync toggle is
   enabled, reusing the existing toggle from the Dashboard feature.
 - Apply incremental frontend updates so only changed sensors trigger
@@ -39,29 +40,42 @@ this produces hundreds of HTTP requests and provides no auto-refresh.
 
 ## Proposed Design
 
-### OEM SensorsSummary Endpoint
+### Standard Redfish Chassis Sensors with Expand
 
-bmcweb will expose a new OEM endpoint:
+The Web UI queries the standard Redfish Chassis Sensors endpoint with expand:
 
-`GET /redfish/v1/Oem/Ami/SensorsSummary`
+`GET /redfish/v1/Chassis/{chassisId}/Sensors?$expand=.($levels=1)`
 
-The endpoint queries D-Bus for all objects under `/xyz/openbmc_project/sensors`
-implementing `xyz.openbmc_project.Sensor.Value`, retrieves all properties in
-bulk, and returns a single JSON response. Login privilege is required.
+`bmcweb` handles this using its efficient expand implementation in
+`redfish-core/lib/sensors.hpp`, returning complete sensor objects within the
+`Members` array in a single response per chassis.
+
+The WebUI discovers the `Sensors.@odata.id` link for every Chassis member and
+caches valid sensor collection URLs. When `VUE_APP_ONETREE_PSM_ENABLED` is
+enabled, it also includes the PowerShelf resource. Sync clears the cached URLs
+so the current inventory is rediscovered after an Entity Manager configuration
+change.
 
 **Response structure:**
 
 ```json
 {
-  "@odata.id": "/redfish/v1/Oem/Ami/SensorsSummary",
-  "@odata.type": "#OemSensorsSummary.v1_0_0.OemSensorsSummary",
-  "Name": "Sensors Summary",
-  "Sensors": [
+  "@odata.id": "/redfish/v1/Chassis/chassis/Sensors",
+  "@odata.type": "#SensorCollection.SensorCollection",
+  "Name": "Sensors Collection",
+  "Members@odata.count": 1,
+  "Members": [
     {
+      "@odata.id": "/redfish/v1/Chassis/chassis/Sensors/inlet_temp",
+      "@odata.type": "#Sensor.v1_0_0.Sensor",
+      "Id": "inlet_temp",
       "Name": "inlet_temp",
       "Reading": 28.5,
       "ReadingUnits": "Cel",
-      "Status": { "State": "Enabled", "Health": "OK" },
+      "Status": {
+        "State": "Enabled",
+        "Health": "OK"
+      },
       "Thresholds": {
         "UpperCaution":  { "Reading": 40.0 },
         "UpperCritical": { "Reading": 45.0 },
@@ -69,64 +83,57 @@ bulk, and returns a single JSON response. Login privilege is required.
         "LowerCaution":  { "Reading": 5.0 },
         "LowerCritical": { "Reading": 0.0 },
         "LowerFatal":    { "Reading": -5.0 }
+      },
+      "Oem": {
+        "Ami": {
+          "@odata.id": "/redfish/v1/Chassis/chassis/Sensors/inlet_temp/Oem/SensorHistory",
+          "SensorThreshold": {
+            "@odata.id": "/redfish/v1/Chassis/chassis/Sensors/Oem/Ami/Threshold/inlet_temp"
+          }
+        }
       }
     }
   ]
 }
 ```
 
-**D-Bus to Redfish property mapping:**
-
-| D-Bus Property | Redfish JSON Field |
-|---|---|
-| `Value` | `Reading` |
-| `Unit` (suffix matched) | `ReadingUnits` |
-| `Available` | `Status.State` (`Enabled` / `Disabled`) |
-| `WarningHigh` / `WarningLow` | `Thresholds.UpperCaution` / `LowerCaution` |
-| `CriticalHigh` / `CriticalLow` | `Thresholds.UpperCritical` / `LowerCritical` |
-| `NonRecoverableHigh` / `NonRecoverableLow` | `Thresholds.UpperFatal` / `LowerFatal` |
-| `WarningAlarmHigh` / `WarningAlarmLow` | `Status.Health` → `"Warning"` |
-| `CriticalAlarmHigh` / `CriticalAlarmLow` | `Status.Health` → `"Critical"` |
-
-**Unit mapping:** `DegreesC` → `Cel`, `Volts` → `V`, `Amperes` → `A`,
-`Watts` → `W`, `RPMS` → `RPM`, `Percent` → `%`.
-
-**Health priority:** Critical overrides Warning. If no alarm properties are
-asserted, health defaults to `OK`.
-
 ### Session-Keepalive Exclusion
 
-The authentication layer must be extended to recognize polling URLs. When a
-request targets any of the following, the session `lastUpdated` timestamp must
-**not** be reset:
+The authentication layer recognizes polling URLs. When a request targets any of
+the following, the session `lastUpdated` timestamp is **not** reset:
 
 - `/redfish/v1/Oem/Ami/Dashboard` (existing)
-- `/redfish/v1/Oem/Ami/SensorsSummary` (new)
-- `/redfish/v1/Chassis/{ChassisId}/Sensors` (new, pattern match)
+- `/redfish/v1/Chassis/{ChassisId}/Sensors` (pattern match)
 
-URL normalization must strip trailing slashes and query parameters before
+URL normalization strips trailing slashes and query parameters before
 comparison.
 
 ### Frontend Polling Integration
 
-The AppHeader Sync toggle must broadcast a global `polling-toggled` event so
-that any page — not just the Dashboard — can start or stop its own polling
-cycle.
+The AppHeader Sync toggle broadcasts a global `polling-toggled` event so
+that any page can start or stop its own polling cycle.
 
-The Sensors page must:
+The Sensors page:
 
-1. On creation, check `localStorage('pollingEnabled')` and start a 10-second
-   polling interval if active. Register a listener for the `polling-toggled`
-   event.
-2. On each poll, call the SensorsSummary endpoint and apply **incremental
-   updates**: compare each sensor's reading, status, and thresholds against
-   the cached value, and commit to the Vuex store only if something changed.
-   Remove sensors that are no longer present in the response.
-3. On destroy (page navigation), clear the polling interval and remove the
+1. On creation, checks `localStorage.getItem('pollingEnabled')` and starts a
+   10-second polling interval if active. Registers a listener for the
+   `polling-toggled` event.
+2. On each poll, queries each cached sensor collection with
+  `?$expand=.($levels=1)` and applies **incremental updates**: compares each
+  sensor's reading, status, units, and thresholds against the cached value,
+  and commits to the Vuex store only if something changed. It preserves the
+  OEM `id` and `thresholdsId` values required for sensor history and threshold
+  editing.
+3. On destroy (page navigation), clears the polling interval and removes the
    event listener.
 
-The initial page load must also use the SensorsSummary endpoint instead of the
-existing multi-request `getAllSensors` path.
+On a successful response, new sensors are added and missing sensors are
+removed. If a sensor collection request fails, existing rows remain visible. A
+`404` clears the cached collection URLs so the next poll rediscovers the
+current Redfish tree.
+
+The initial page load also uses the `pollSensorUpdates` path to load sensor data
+efficiently in a single pass.
 
 The polling flow (Sync toggle → event broadcast → interval → API call →
 session exclusion) is identical to the existing Dashboard polling mechanism.
@@ -134,28 +141,34 @@ session exclusion) is identical to the existing Dashboard polling mechanism.
 ## Alternatives Considered
 
 - **Poll individual Redfish sensor resources** — Rejected because it produces
-  one HTTP request per sensor, which is the same N+1 problem the feature is
-  solving.
+  one HTTP request per sensor (100+ requests per poll interval).
 - **Full array replacement on each poll** — Simpler frontend logic but causes
   the entire table to re-render, losing scroll/sort/selection state.
 
 ## Validation Plan
 
 - **Polling interval confirmed** — Login, open the Sensors page, enable Sync,
-  and open the browser Network tab. Verify that a
-  `GET /redfish/v1/Oem/Ami/SensorsSummary` request is made every 10 seconds.
+  and open the browser Network tab. Verify one
+  `GET /redfish/v1/Chassis/{chassisId}/Sensors?$expand=.($levels=1)` request per
+  valid sensor-owning chassis every 10 seconds.
+- **Session idle timeout** — Enable Sync on the Sensors page and leave the
+  browser untouched for the session timeout duration. Confirm the user is
+  logged out due to inactivity (verifying background polling does not reset
+  session activity).
 - **Threshold update reflected** — With polling active, modify a sensor's
   threshold value on the BMC. Verify the Sensors page displays the updated
   threshold within the next poll cycle without a manual page reload.
-- **Sensor rename reflected** — With polling active, rename a sensor on the
-  BMC. Verify the old name disappears and the new name appears on the Sensors
-  page within the next poll cycle.
-- **Sensor removal reflected** — With polling active, delete a sensor from the
-  BMC. Verify the sensor row is removed from the Sensors page within the next
-  poll cycle.
-- **New sensor reflected** — With polling active, add a new sensor on the BMC.
-  Verify the new sensor appears on the Sensors page within the next poll
-  cycle.
+- **Sensor reading update reflected** — Change a sensor value on the BMC.
+  Verify the value updates in the table smoothly without table jumping or scroll
+  reset.
+- **Sensor removal / addition reflected** — Add or remove a sensor on the BMC.
+  Verify the table dynamically updates to include or prune the sensor.
+- **Sensor history and threshold editing** — Verify opening a supported sensor
+  history graph and changing a threshold continue to use the `id` and
+  `thresholdsId` returned by the expanded response.
+- **Transient resource failure** — Restart Entity Manager while polling is
+  enabled. Verify existing rows remain visible on a failed request, and changed
+  data appears on the next successful poll.
 - **Polling stops on disable** — With polling active, click Sync to disable
-  it. Verify in the Network tab that no further SensorsSummary requests are
-  made and the sensor values on the page stop updating.
+  it. Verify in the Network tab that no further requests are made and the sensor
+  values on the page stop updating.
