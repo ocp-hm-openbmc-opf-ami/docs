@@ -183,6 +183,46 @@ Request: [Selector] [0x00] [Data...]
 
 Invalid selectors, wrong payload lengths, or bad values are rejected with an IPMI error completion code.
 
+Get Recovery Info - NetFn 0x32, Command 0xFB
+
+Request: [Selector] [0x00]
+
+The request has no data bytes: byte 1 is the selector (same selector values as
+Set Recovery Info), byte 2 is the block selector and must be 0x00.
+
+| Selector | Parameter | Response Data | Example |
+| --- | --- | --- | --- |
+| 0x01 | TFTP server IP | 4 bytes, network byte order | 172.31.201.40 (172=0xAC, 31=0x1F, 201=0xC9, 40=0x28) returns AC 1F C9 28 |
+| 0x02 | Recovery image filename | 1–42 ASCII bytes, no embedded NUL | ami-ocp.mtd returns 61 6D 69 2D 6F 63 70 2E 6D 74 64 |
+| 0x03 | Recovery mode selection | 1 byte: 0x00 = auto, 0x01 = mmc, 0x02 = tftp | mode tftp returns 02 |
+| 0x04 | eMMC device and partition | 2 bytes: [recovery_mmc_dev] [recovery_mmc_part] | dev 0, part 5 returns 00 05 |
+
+### Example Commands (Set and Get)
+
+Replace <bmc-ip> and <password> with the target BMC address and credentials.
+
+Selector 0x01 - TFTP server IP (example value 172.31.201.40):
+Set: ipmitool -I lanplus -H <bmc-ip> -U root -P <password> raw 0x32 0xfa 0x01 0x00 0xAC 0x1F 0xC9 0x28
+Get: ipmitool -I lanplus -H <bmc-ip> -U root -P <password> raw 0x32 0xfb 0x01 0x00
+     -> returns AC 1F C9 28
+
+Selector 0x02 - Recovery image filename (example value ami-ocp.mtd):
+Set: ipmitool -I lanplus -H <bmc-ip> -U root -P <password> raw 0x32 0xfa 0x02 0x00 0x61 0x6D 0x69 0x2D 0x6F 0x63 0x70 0x2E 0x6D 0x74 0x64
+Get: ipmitool -I lanplus -H <bmc-ip> -U root -P <password> raw 0x32 0xfb 0x02 0x00
+     -> returns 61 6D 69 2D 6F 63 70 2E 6D 74 64
+
+Selector 0x03 - Recovery mode selection (example value tftp = 0x02):
+Set: ipmitool -I lanplus -H <bmc-ip> -U root -P <password> raw 0x32 0xfa 0x03 0x00 0x02
+Get: ipmitool -I lanplus -H <bmc-ip> -U root -P <password> raw 0x32 0xfb 0x03 0x00
+     -> returns 02
+
+Selector 0x04 - eMMC device and partition (example value dev 0, part 5):
+Set: ipmitool -I lanplus -H <bmc-ip> -U root -P <password> raw 0x32 0xfa 0x04 0x00 0x00 0x05
+Get: ipmitool -I lanplus -H <bmc-ip> -U root -P <password> raw 0x32 0xfb 0x04 0x00
+     -> returns 00 05
+
+Invalid selectors or a non-zero block selector are rejected with an IPMI error completion code.
+
 ## Error Handling and Observability
 
 - U-Boot must print the selected source, retry number, SPI-ROM write result and fallback decision to the serial console.
