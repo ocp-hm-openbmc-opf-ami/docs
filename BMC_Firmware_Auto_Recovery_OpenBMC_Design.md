@@ -74,7 +74,9 @@ sequenceDiagram
 ## Recovery Image and Storage
 
 The local recovery image resides on eMMC device 0, partition 5 (formatted as ext4).
-The recovery image filename is configurable via recovery_bootfile (default filename
+The eMMC/SD device and partition are configurable via recovery_mmc_dev and
+recovery_mmc_part (refer to the Configuration section). The recovery image
+filename is configurable via recovery_bootfile (default filename
 obmc-phosphor-image-evb-ast2600.static.mtd), is used by both eMMC and TFTP
 recovery, and is configurable at runtime (refer to the OEM IPMI Interface
 section).
@@ -84,6 +86,7 @@ section).
 - For all images used (eMMC recovery and TFTP recovery sources), the U-Boot environment size must be identical.
 - The start offset of the U-Boot environment must be the same across all images.
 - This consistency ensures reliable recovery behavior when switching between recovery sources and avoids configuration conflicts.
+- Precondition: this feature requires a single-image OpenBMC layout. If dual-image support is enabled, the auto-recovery mechanism cannot be used.
 
 ## Configuration
 
@@ -92,9 +95,9 @@ All values are persistent U-Boot environment variables.
 | Variable | Default value | Allowed values | Description | Variable Change Option |
 | --- | --- | --- | --- | --- |
 | recovery_retry | 3 | Positive integer | Maximum attempts per recovery source. | Build-time (CONFIG_RECOVERY_RETRY) |
-| recovery_last_source | none | none, mmc, or tftp | Last recovery source in the current recovery sequence. | U-Boot runtime (env set) |
+| recovery_last_source | none | none, mmc, or tftp | Last recovery source in the current recovery sequence. Filled automatically by U-Boot; must not be set manually. | U-Boot runtime (env set) |
 | recovery_max_bootretry | 3 | Non-negative integer | Failed normal boot attempts allowed before automatic recovery starts. | Build-time (CONFIG_RECOVERY_MAX_BOOTRETRY) |
-| recovery_current_bootretry | 0 | Non-negative integer | Persistent normal-boot attempt counter. | U-Boot runtime (env set) |
+| recovery_current_bootretry | 0 | Non-negative integer | Persistent normal-boot attempt counter. Filled automatically by U-Boot; must not be set manually. | U-Boot runtime (env set) |
 | recovery_mmc_dev | 0 | 0, 1, or 2 (hardware/vendor-defined) | eMMC device index containing the recovery image. | Build-time (CONFIG_RECOVERY_MMC_DEV); OEM IPMI |
 | recovery_mmc_part | 5 | Platform/vendor-defined partition number | eMMC partition containing the recovery image. | Build-time (CONFIG_RECOVERY_MMC_PART); OEM IPMI |
 | recovery_bootfile | obmc-phosphor-image-evb-ast2600.static.mtd | 1–42 ASCII bytes, no embedded NUL | Recovery image filename used by both eMMC and TFTP sources. | OEM IPMI |
